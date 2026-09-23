@@ -1,0 +1,1319 @@
+// Prisma Schema for Multi-Tenant Madrasah Management & Administration SaaS
+// Designed for PostgreSQL production deployment with strict tenant isolation,
+// composite indexes, audit trails, and financial record immutability.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum SubscriptionPlan {
+  FREE_TRIAL
+  STANDARD
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum MadrasahType {
+  QAWMI
+  ALIA
+  CADET
+  HIFZ_ONLY
+  NURANI_ONLY
+}
+
+enum RoleType {
+  SUPER_ADMIN
+  INSTITUTION_ADMIN
+  MUHTAMIM
+  HEAD_TEACHER
+  TEACHER
+  ACCOUNTANT
+  STAFF
+  GUARDIAN
+  STUDENT
+}
+
+enum DepartmentType {
+  NURANI
+  NAJERA
+  HIFZ
+  KITAB
+  DAWRA_HADITH
+  IFTA
+  ALIA_EBETEDAYEE
+  ALIA_DAKHIL
+  ALIA_ALIM
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  TRANSFERRED
+  ALUMNI
+  SUSPENDED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  LEAVE
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  BKASH
+  NAGAD
+  ROCKET
+  CHEQUE
+}
+
+enum FeeStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  WAIVED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ExamType {
+  MONTHLY
+  FIRST_TERM
+  MID_TERM
+  FINAL
+  CENTRAL_BEFAQ
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// -------------------------------------------------------------
+// CORE SAAS TENANCY & ACCESS CONTROL
+// -------------------------------------------------------------
+
+model Tenant {
+  id               String           @id @default(uuid())
+  code             String           @unique
+  nameBangla       String
+  nameEnglish      String
+  nameArabic       String?
+  madrasahType     MadrasahType     @default(QAWMI)
+  eiinCode         String?
+  registrationNo   String?
+  establishedYear  Int?
+  address          String
+  district         String
+  division         String?
+  phone            String
+  email            String?
+  website          String?
+  logoUrl          String?
+  currency         String           @default("BDT")
+  planType         SubscriptionPlan @default(STANDARD)
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  deletedAt        DateTime?
+
+  // Relations
+  users               User[]
+  roles               Role[]
+  academicSessions    AcademicSession[]
+  classes             Class[]
+  sections            Section[]
+  departments         Department[]
+  shifts              Shift[]
+  subjects            Subject[]
+  students            Student[]
+  guardians           Guardian[]
+  attendances         Attendance[]
+  homeworks           Homework[]
+  lessonPlans         LessonPlan[]
+  feeTypes            FeeType[]
+  studentFees         StudentFee[]
+  feePayments         FeePayment[]
+  receipts            Receipt[]
+  funds               Fund[]
+  incomes             Income[]
+  expenses            Expense[]
+  fundTransfers       FundTransfer[]
+  donors              Donor[]
+  donations           Donation[]
+  suppliers           Supplier[]
+  purchases           Purchase[]
+  staffMembers        Staff[]
+  salaries            Salary[]
+  salaryPayments      SalaryPayment[]
+  advances            Advance[]
+  leaves              Leave[]
+  exams               Exam[]
+  routines            Routine[]
+  notices             Notice[]
+  notifications       Notification[]
+  assets              Asset[]
+  certificates        Certificate[]
+  promotions          Promotion[]
+  auditLogs           AuditLog[]
+  institutionSettings InstitutionSetting[]
+  subscriptions       Subscription[]
+  licenses            License[]
+
+  @@index([isActive])
+  @@index([district])
+  @@map("tenants")
+}
+
+model User {
+  id               String        @id @default(uuid())
+  tenantId         String?       // Optional for Super Admin
+  username         String        @unique
+  email            String?       @unique
+  mobile           String        @unique
+  passwordHash     String
+  fullName         String
+  role             RoleType      @default(STAFF)
+  isActive         Boolean       @default(true)
+  avatarUrl        String?
+  lastLoginAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  tenant           Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles        UserRole[]
+  auditLogs        AuditLog[]
+  createdExpenses  Expense[]     @relation("ExpenseCreatedBy")
+  approvedExpenses Expense[]     @relation("ExpenseApprovedBy")
+  collectedPayments FeePayment[] @relation("PaymentCollectedBy")
+
+  @@index([tenantId, role])
+  @@index([mobile])
+  @@map("users")
+}
+
+model Role {
+  id               String           @id @default(uuid())
+  tenantId         String?          // NULL for system global roles
+  name             String
+  code             String
+  description      String?
+  isSystemRole     Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rolePermissions  RolePermission[]
+  userRoles        UserRole[]
+
+  @@unique([tenantId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id               String           @id @default(uuid())
+  module           String           // e.g. "STUDENTS", "FEES", "ACADEMIC"
+  action           String           // e.g. "CREATE", "READ", "UPDATE", "DELETE", "APPROVE"
+  code             String           @unique // e.g. "STUDENTS:CREATE"
+  description      String?
+  createdAt        DateTime         @default(now())
+
+  rolePermissions  RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id               String       @id @default(uuid())
+  roleId           String
+  permissionId     String
+  createdAt        DateTime     @default(now())
+
+  role             Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission       Permission   @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id               String       @id @default(uuid())
+  userId           String
+  roleId           String
+  assignedAt       DateTime     @default(now())
+
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role             Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+// -------------------------------------------------------------
+// ACADEMIC HIERARCHY
+// -------------------------------------------------------------
+
+model AcademicSession {
+  id               String       @id @default(uuid())
+  tenantId         String
+  name             String       // e.g. "২০২৫-২০২৬" or "1446-1447 Hijri"
+  hijriYear        String?
+  startDate        DateTime
+  endDate          DateTime
+  isCurrent        Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studentsHistory  StudentAcademicHistory[]
+  studentFees      StudentFee[]
+  exams            Exam[]
+  routines         Routine[]
+  promotions       Promotion[]
+
+  @@index([tenantId, isCurrent])
+  @@map("academic_sessions")
+}
+
+model Department {
+  id               String          @id @default(uuid())
+  tenantId         String
+  type             DepartmentType
+  nameBangla       String
+  nameEnglish      String
+  description      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  classes          Class[]
+  staffMembers     Staff[]
+
+  @@unique([tenantId, nameBangla])
+  @@map("departments")
+}
+
+model Shift {
+  id               String       @id @default(uuid())
+  tenantId         String
+  name             String       // e.g. "সকাল শিফট", "দিবা শিফট"
+  startTime        String
+  endTime          String
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sections         Section[]
+
+  @@map("shifts")
+}
+
+model Class {
+  id               String       @id @default(uuid())
+  tenantId         String
+  departmentId     String
+  nameBangla       String
+  nameEnglish      String
+  orderIndex       Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department       Department   @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  sections         Section[]
+  classSubjects    ClassSubject[]
+  students         Student[]
+  studentAcademicHistories StudentAcademicHistory[]
+  exams            Exam[]
+  routines         Routine[]
+
+  @@index([tenantId, orderIndex])
+  @@map("classes")
+}
+
+model Section {
+  id               String       @id @default(uuid())
+  tenantId         String
+  classId          String
+  shiftId          String?
+  name             String       // e.g. "শাখা-ক (আবু বকর রা.)"
+  capacity         Int          @default(40)
+  roomNumber       String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  class            Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  shift            Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  students         Student[]
+  attendances      Attendance[]
+  homeworks        Homework[]
+  routines         Routine[]
+
+  @@unique([classId, name])
+  @@map("sections")
+}
+
+model Subject {
+  id               String          @id @default(uuid())
+  tenantId         String
+  code             String
+  nameBangla       String
+  nameEnglish      String
+  nameArabic       String?
+  totalMarks       Int             @default(100)
+  passMarks        Int             @default(33)
+  isOptional       Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  classSubjects    ClassSubject[]
+  teacherSubjects  TeacherSubject[]
+  examSubjects     ExamSubject[]
+  lessonPlans      LessonPlan[]
+
+  @@unique([tenantId, code])
+  @@map("subjects")
+}
+
+model ClassSubject {
+  id               String       @id @default(uuid())
+  classId          String
+  subjectId        String
+  createdAt        DateTime     @default(now())
+
+  class            Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, subjectId])
+  @@map("class_subjects")
+}
+
+model TeacherSubject {
+  id               String       @id @default(uuid())
+  staffId          String
+  subjectId        String
+  assignedDate     DateTime     @default(now())
+
+  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, subjectId])
+  @@map("teacher_subjects")
+}
+
+// -------------------------------------------------------------
+// STUDENTS & GUARDIANS
+// -------------------------------------------------------------
+
+model Student {
+  id                    String        @id @default(uuid())
+  tenantId              String
+  studentIdCardNo       String        // Unique institutional ID
+  admissionNo           String        // Admission Register Number
+  admissionDate         DateTime      @default(now())
+  nameBangla            String
+  nameEnglish           String
+  nameArabic            String?
+  gender                Gender        @default(MALE)
+  dateOfBirth           DateTime
+  bloodGroup            BloodGroup?
+  birthCertificateNo    String?
+  classId               String
+  sectionId             String
+  rollNo                Int
+  isResidential         Boolean       @default(false)
+  roomNumber            String?
+  seatNumber            String?
+  status                StudentStatus @default(ACTIVE)
+  photoUrl              String?
+  fatherNameBangla      String
+  motherNameBangla      String
+  guardianName          String
+  guardianRelation      String
+  guardianMobile        String
+  presentAddress        String
+  permanentAddress      String
+  previousMadrasah      String?
+  tcNumber              String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  deletedAt             DateTime?
+
+  tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  class                 Class         @relation(fields: [classId], references: [id], onDelete: Restrict)
+  section               Section       @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  studentGuardians      StudentGuardian[]
+  documents             StudentDocument[]
+  academicHistories     StudentAcademicHistory[]
+  attendances           Attendance[]
+  studentFees           StudentFee[]
+  feePayments           FeePayment[]
+  receipts              Receipt[]
+  examRegistrations     ExamRegistration[]
+  marks                 Marks[]
+  results               Result[]
+  certificates          Certificate[]
+  promotions            Promotion[]
+
+  @@unique([tenantId, studentIdCardNo])
+  @@unique([tenantId, admissionNo])
+  @@index([tenantId, classId, sectionId, rollNo])
+  @@index([guardianMobile])
+  @@map("students")
+}
+
+model Guardian {
+  id               String            @id @default(uuid())
+  tenantId         String
+  nameBangla       String
+  nameEnglish      String?
+  relation         String
+  nidNumber        String?
+  mobileNumber     String
+  altMobileNumber  String?
+  occupation       String?
+  yearlyIncome     Float?
+  presentAddress   String
+  permanentAddress String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studentGuardians StudentGuardian[]
+
+  @@index([tenantId, mobileNumber])
+  @@map("guardians")
+}
+
+model StudentGuardian {
+  id               String       @id @default(uuid())
+  studentId        String
+  guardianId       String
+  isPrimary        Boolean      @default(false)
+  relationType     String       // FATHER, MOTHER, UNCLE, etc.
+
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  guardian         Guardian     @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, guardianId])
+  @@map("student_guardians")
+}
+
+model StudentDocument {
+  id               String       @id @default(uuid())
+  studentId        String
+  title            String       // e.g. "জন্ম নিবন্ধন", "পূর্ববর্তী পরীক্ষার সনদ"
+  documentType     String       // BIRTH_CERTIFICATE, PREV_CERTIFICATE, NID, PHOTO
+  fileUrl          String
+  uploadedAt       DateTime     @default(now())
+
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_documents")
+}
+
+model StudentAcademicHistory {
+  id               String          @id @default(uuid())
+  studentId        String
+  sessionId        String
+  classId          String
+  rollNo           Int
+  gpaOrDivision    String?
+  passYear         Int
+  remarks          String?
+  createdAt        DateTime        @default(now())
+
+  student          Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  class            Class           @relation(fields: [classId], references: [id], onDelete: Restrict)
+
+  @@index([studentId, sessionId])
+  @@map("student_academic_histories")
+}
+
+// -------------------------------------------------------------
+// ATTENDANCE & ACADEMIC ACTIVITY
+// -------------------------------------------------------------
+
+model Attendance {
+  id               String           @id @default(uuid())
+  tenantId         String
+  date             DateTime         @db.Date
+  studentId        String
+  sectionId        String
+  status           AttendanceStatus @default(PRESENT)
+  inTime           String?
+  outTime          String?
+  smsSent          Boolean          @default(false)
+  remarks          String?
+  recordedBy       String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student          Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  section          Section          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, date, studentId])
+  @@index([tenantId, sectionId, date])
+  @@map("attendances")
+}
+
+model Homework {
+  id               String       @id @default(uuid())
+  tenantId         String
+  sectionId        String
+  title            String
+  description      String
+  givenDate        DateTime     @db.Date
+  dueDate          DateTime     @db.Date
+  assignedBy       String
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  section          Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@map("homeworks")
+}
+
+model LessonPlan {
+  id               String       @id @default(uuid())
+  tenantId         String
+  subjectId        String
+  staffId          String
+  topicName        String
+  targetDate       DateTime     @db.Date
+  completionDate   DateTime?    @db.Date
+  isCompleted      Boolean      @default(false)
+  notes            String?
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("lesson_plans")
+}
+
+// -------------------------------------------------------------
+// FINANCIAL: FEES, RECEIPTS, FUNDS & ACCOUNTING
+// IMMUTABLE LEDGER RULES APPLY: NO PHYSICAL DELETE
+// -------------------------------------------------------------
+
+model FeeType {
+  id               String       @id @default(uuid())
+  tenantId         String
+  nameBangla       String       // e.g. "মাসিক টিউশন ফি", "ভর্তি ফি", "বোর্ডিং ফি"
+  nameEnglish      String
+  defaultAmount    Float        @default(0)
+  isRecurring      Boolean      @default(true) // monthly recurring
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studentFees      StudentFee[]
+
+  @@unique([tenantId, nameBangla])
+  @@map("fee_types")
+}
+
+model StudentFee {
+  id               String          @id @default(uuid())
+  tenantId         String
+  studentId        String
+  sessionId        String
+  feeTypeId        String
+  monthYear        String          // e.g. "2025-02"
+  originalAmount   Float
+  waiverAmount     Float           @default(0)
+  netPayable       Float
+  paidAmount       Float           @default(0)
+  dueAmount        Float
+  status           FeeStatus       @default(UNPAID)
+  dueDate          DateTime?       @db.Date
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student          Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  feeType          FeeType         @relation(fields: [feeTypeId], references: [id], onDelete: Restrict)
+  feePayments      FeePayment[]
+
+  @@index([tenantId, studentId, status])
+  @@index([tenantId, monthYear])
+  @@map("student_fees")
+}
+
+model FeePayment {
+  id               String         @id @default(uuid())
+  tenantId         String
+  studentFeeId     String
+  studentId        String
+  receiptId        String
+  amountPaid       Float
+  paymentMethod    PaymentMethod  @default(CASH)
+  transactionRefNo String?
+  collectedBy      String
+  paymentDate      DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studentFee       StudentFee     @relation(fields: [studentFeeId], references: [id], onDelete: Restrict)
+  student          Student        @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  receipt          Receipt        @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  collector        User           @relation("PaymentCollectedBy", fields: [collectedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, paymentDate])
+  @@map("fee_payments")
+}
+
+model Receipt {
+  id               String         @id @default(uuid())
+  tenantId         String
+  receiptNo        String         // e.g. "REC-2025-00123"
+  studentId        String
+  totalAmount      Float
+  paymentDate      DateTime       @default(now())
+  paymentMethod    PaymentMethod  @default(CASH)
+  isCancelled      Boolean        @default(false)
+  cancellationReason String?
+  cancelledAt      DateTime?
+  cancelledBy      String?
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student          Student        @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  feePayments      FeePayment[]
+
+  @@unique([tenantId, receiptNo])
+  @@index([tenantId, paymentDate])
+  @@map("receipts")
+}
+
+model Fund {
+  id               String         @id @default(uuid())
+  tenantId         String
+  nameBangla       String         // e.g. "সাধারণ তহবিল", "লিল্লাহ ও এতিমখানা তহবিল", "বোর্ডিং তহবিল"
+  nameEnglish      String
+  code             String
+  isRestricted     Boolean        @default(false) // e.g. Zakat cannot mix with general salary
+  currentBalance   Float          @default(0)
+  description      String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  incomes          Income[]
+  expenses         Expense[]
+  fromTransfers    FundTransfer[] @relation("TransferFromFund")
+  toTransfers      FundTransfer[] @relation("TransferToFund")
+  donations        Donation[]
+
+  @@unique([tenantId, code])
+  @@map("funds")
+}
+
+model Income {
+  id               String         @id @default(uuid())
+  tenantId         String
+  fundId           String
+  voucherNo        String         // e.g. "VOUCH-IN-2025-001"
+  category         String         // e.g. "মাসিক ফি আদায়", "দান ও অনুদান", "বাণিজ্যিক দোকান ভাড়া"
+  amount           Float
+  incomeDate       DateTime       @db.Date
+  paymentMethod    PaymentMethod  @default(CASH)
+  description      String?
+  receivedFrom     String?
+  createdBy        String
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fund             Fund           @relation(fields: [fundId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, fundId, incomeDate])
+  @@map("incomes")
+}
+
+model Expense {
+  id               String         @id @default(uuid())
+  tenantId         String
+  fundId           String
+  voucherNo        String         // e.g. "VOUCH-EX-2025-001"
+  category         String         // e.g. "ওস্তাদ বেতন", "ছাত্র খানা ও চাউল", "বিদ্যুৎ ও গ্যাস", "বই ক্রয়"
+  amount           Float
+  expenseDate      DateTime       @db.Date
+  paymentMethod    PaymentMethod  @default(CASH)
+  description      String
+  paidTo           String
+  approvalStatus   ApprovalStatus @default(PENDING)
+  approvedBy       String?
+  approvedAt       DateTime?
+  createdBy        String
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fund             Fund           @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  creator          User           @relation("ExpenseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  approver         User?          @relation("ExpenseApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, fundId, expenseDate])
+  @@map("expenses")
+}
+
+model FundTransfer {
+  id               String         @id @default(uuid())
+  tenantId         String
+  fromFundId       String
+  toFundId         String
+  amount           Float
+  transferDate     DateTime       @db.Date
+  reason           String
+  approvedBy       String
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromFund         Fund           @relation("TransferFromFund", fields: [fromFundId], references: [id], onDelete: Restrict)
+  toFund           Fund           @relation("TransferToFund", fields: [toFundId], references: [id], onDelete: Restrict)
+
+  @@map("fund_transfers")
+}
+
+// -------------------------------------------------------------
+// DONORS & PURCHASES
+// -------------------------------------------------------------
+
+model Donor {
+  id               String       @id @default(uuid())
+  tenantId         String
+  nameBangla       String
+  nameEnglish      String?
+  mobile           String
+  email            String?
+  address          String?
+  donorType        String       @default("INDIVIDUAL") // INDIVIDUAL, CORPORATE, OVERSEAS
+  isAnonymous      Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  donations        Donation[]
+
+  @@index([tenantId, mobile])
+  @@map("donors")
+}
+
+model Donation {
+  id               String         @id @default(uuid())
+  tenantId         String
+  donorId          String?
+  fundId           String
+  receiptNo        String         @unique
+  amount           Float
+  donationType     String         // ZAKAT, FITRA, SADQAH, GENERAL, BUILDING
+  donationDate     DateTime       @db.Date
+  paymentMethod    PaymentMethod  @default(CASH)
+  remarks          String?
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  donor            Donor?         @relation(fields: [donorId], references: [id], onDelete: SetNull)
+  fund             Fund           @relation(fields: [fundId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, donationDate])
+  @@map("donations")
+}
+
+model Supplier {
+  id               String       @id @default(uuid())
+  tenantId         String
+  companyName      String
+  contactPerson    String
+  mobile           String
+  address          String?
+  materials        String?      // e.g. "চাউল, ডাল, তেল", "বই পুস্তক", "নির্মাণ সামগ্রী"
+  currentDue       Float        @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchases        Purchase[]
+
+  @@map("suppliers")
+}
+
+model Purchase {
+  id               String         @id @default(uuid())
+  tenantId         String
+  supplierId       String
+  invoiceNo        String
+  purchaseDate     DateTime       @db.Date
+  totalAmount      Float
+  paidAmount       Float
+  dueAmount        Float
+  itemsDescription String
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier         Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, purchaseDate])
+  @@map("purchases")
+}
+
+// -------------------------------------------------------------
+// TEACHERS, STAFF, PAYROLL & LEAVE
+// -------------------------------------------------------------
+
+model Staff {
+  id               String           @id @default(uuid())
+  tenantId         String
+  employeeId       String
+  nameBangla       String
+  nameEnglish      String
+  designation      String           // e.g. "মুহতামিম", "শায়খুল হাদিস", "প্রধান ক্বারী", "হিসাবরক্ষক"
+  departmentId     String?
+  mobile           String
+  email            String?
+  nidNumber        String?
+  joiningDate      DateTime         @db.Date
+  baseSalary       Float            @default(0)
+  bloodGroup       BloodGroup?
+  status           String           @default("ACTIVE") // ACTIVE, ON_LEAVE, RESIGNED, RETIRED
+  photoUrl         String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  deletedAt        DateTime?
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department       Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  teacherSubjects  TeacherSubject[]
+  salaries         Salary[]
+  salaryPayments   SalaryPayment[]
+  advances         Advance[]
+  leaves           Leave[]
+  lessonPlans      LessonPlan[]
+
+  @@unique([tenantId, employeeId])
+  @@index([tenantId, status])
+  @@map("staff")
+}
+
+model Salary {
+  id               String       @id @default(uuid())
+  tenantId         String
+  staffId          String
+  baseAmount       Float
+  houseRentAllowance Float      @default(0)
+  medicalAllowance Float        @default(0)
+  specialAllowance Float        @default(0)
+  providentFundDeduction Float  @default(0)
+  netPayable       Float
+  effectiveFrom    DateTime     @db.Date
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, staffId])
+  @@map("salaries")
+}
+
+model SalaryPayment {
+  id               String         @id @default(uuid())
+  tenantId         String
+  staffId          String
+  monthYear        String         // e.g. "2025-01"
+  paidAmount       Float
+  deductionAmount  Float          @default(0)
+  bonusAmount      Float          @default(0)
+  paymentMethod    PaymentMethod  @default(CASH)
+  disbursementDate DateTime       @db.Date
+  approvedBy       String
+  createdAt        DateTime       @default(now())
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff            Staff          @relation(fields: [staffId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, staffId, monthYear])
+  @@map("salary_payments")
+}
+
+model Advance {
+  id               String       @id @default(uuid())
+  tenantId         String
+  staffId          String
+  amount           Float
+  requestDate      DateTime     @db.Date
+  reason           String
+  repaidAmount     Float        @default(0)
+  monthlyDeduction Float
+  isFullyRepaid    Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("advances")
+}
+
+model Leave {
+  id               String       @id @default(uuid())
+  tenantId         String
+  staffId          String
+  leaveType        String       // CASUAL, MEDICAL, HAJJ, MATERNITY
+  startDate        DateTime     @db.Date
+  endDate          DateTime     @db.Date
+  totalDays        Int
+  reason           String
+  status           LeaveStatus  @default(PENDING)
+  approvedBy       String?
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff            Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("leaves")
+}
+
+// -------------------------------------------------------------
+// EXAMINATIONS, MARKS & PROGRESS REPORTS
+// -------------------------------------------------------------
+
+model Exam {
+  id               String          @id @default(uuid())
+  tenantId         String
+  sessionId        String
+  classId          String
+  titleBangla      String          // e.g. "১ম সাময়িক পরীক্ষা ২০২৫"
+  titleEnglish     String
+  examType         ExamType        @default(FIRST_TERM)
+  startDate        DateTime        @db.Date
+  endDate          DateTime        @db.Date
+  isPublished      Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  class            Class           @relation(fields: [classId], references: [id], onDelete: Restrict)
+  examSubjects     ExamSubject[]
+  registrations    ExamRegistration[]
+  results          Result[]
+
+  @@index([tenantId, sessionId, classId])
+  @@map("exams")
+}
+
+model ExamSubject {
+  id               String       @id @default(uuid())
+  examId           String
+  subjectId        String
+  examDate         DateTime     @db.Date
+  startTime        String
+  endTime          String
+  totalMarks       Int          @default(100)
+  passMarks        Int          @default(33)
+
+  exam             Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  marks            Marks[]
+
+  @@unique([examId, subjectId])
+  @@map("exam_subjects")
+}
+
+model ExamRegistration {
+  id               String       @id @default(uuid())
+  examId           String
+  studentId        String
+  admitCardNo      String
+  isClearedFees    Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+
+  exam             Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentId])
+  @@map("exam_registrations")
+}
+
+model Marks {
+  id               String       @id @default(uuid())
+  examSubjectId    String
+  studentId        String
+  writtenMarks     Float        @default(0)
+  vivaOrOralMarks  Float        @default(0)
+  practicalMarks   Float        @default(0)
+  totalMarks       Float
+  isAbsent         Boolean      @default(false)
+  grade            String?      // Mumtaz, Jayyid Jiddan, Jayyid, Maqboul, Rasib OR A+, A, B, F
+  remarks          String?
+  enteredBy        String
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  examSubject      ExamSubject  @relation(fields: [examSubjectId], references: [id], onDelete: Cascade)
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examSubjectId, studentId])
+  @@map("marks")
+}
+
+model Result {
+  id               String       @id @default(uuid())
+  examId           String
+  studentId        String
+  grandTotalMarks  Float
+  percentage       Float
+  divisionOrGrade  String       // e.g. "মুমতাজ (Mumtaz)", "জায়্যিদ জিদ্দান"
+  positionInClass  Int?
+  isPassed         Boolean      @default(true)
+  remarks          String?
+  createdAt        DateTime     @default(now())
+
+  exam             Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentId])
+  @@map("results")
+}
+
+// -------------------------------------------------------------
+// ROUTINE, NOTICES & NOTIFICATIONS
+// -------------------------------------------------------------
+
+model Routine {
+  id               String          @id @default(uuid())
+  tenantId         String
+  sessionId        String
+  classId          String
+  sectionId        String
+  dayOfWeek        String          // SATURDAY, SUNDAY, MONDAY, TUESDAY, WEDNESDAY, THURSDAY
+  periodNumber     Int
+  startTime        String
+  endTime          String
+  subjectName      String
+  teacherName      String
+  createdAt        DateTime        @default(now())
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  class            Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section          Section         @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, classId, sectionId])
+  @@map("routines")
+}
+
+model Notice {
+  id               String       @id @default(uuid())
+  tenantId         String
+  title            String
+  content          String
+  publishDate      DateTime     @db.Date
+  expireDate       DateTime?    @db.Date
+  targetAudience   String       @default("ALL") // ALL, TEACHERS, STUDENTS, GUARDIANS
+  priority         String       @default("NORMAL") // NORMAL, HIGH, URGENT
+  attachmentUrl    String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, publishDate])
+  @@map("notices")
+}
+
+model Notification {
+  id               String       @id @default(uuid())
+  tenantId         String
+  recipientId      String
+  title            String
+  message          String
+  type             String       // SMS, IN_APP, EMAIL
+  isRead           Boolean      @default(false)
+  sentAt           DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, recipientId, isRead])
+  @@map("notifications")
+}
+
+// -------------------------------------------------------------
+// ASSETS, CERTIFICATES, PROMOTIONS & ALUMNI
+// -------------------------------------------------------------
+
+model Asset {
+  id               String       @id @default(uuid())
+  tenantId         String
+  assetName        String
+  category         String       // FURNITURE, ELECTRONICS, BOOKS, INFRASTRUCTURE
+  quantity         Int          @default(1)
+  purchaseDate     DateTime?    @db.Date
+  purchaseCost     Float?
+  locationRoom     String?
+  condition        String       @default("GOOD")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("assets")
+}
+
+model Certificate {
+  id               String       @id @default(uuid())
+  tenantId         String
+  studentId        String
+  certificateType  String       // ADMISSION_CERTIFICATE, COMPLETION, CHARACTER, HIFZ_SANAD
+  certificateNo    String       @unique
+  issueDate        DateTime     @db.Date
+  issuedBy         String
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student          Student      @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@map("certificates")
+}
+
+model Promotion {
+  id               String          @id @default(uuid())
+  tenantId         String
+  studentId        String
+  fromSessionId    String
+  toSessionId      String
+  fromClassId      String
+  toClassId        String
+  promotedDate     DateTime        @default(now())
+  remarks          String?
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student          Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  fromSession      AcademicSession @relation(fields: [fromSessionId], references: [id], onDelete: Restrict)
+
+  @@map("promotions")
+}
+
+// -------------------------------------------------------------
+// AUDIT LOGS, SETTINGS & SUBSCRIPTIONS
+// -------------------------------------------------------------
+
+model AuditLog {
+  id               String       @id @default(uuid())
+  tenantId         String?
+  userId           String?
+  entityName       String       // e.g. "StudentFee", "Expense", "Student"
+  entityId         String
+  action           String       // CREATE, UPDATE, DELETE, CANCEL, APPROVE
+  oldValues        Json?
+  newValues        Json?
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user             User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, entityName, createdAt])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  id               String       @id @default(uuid())
+  key              String       @unique
+  value            String
+  description      String?
+  updatedAt        DateTime     @updatedAt
+
+  @@map("system_settings")
+}
+
+model InstitutionSetting {
+  id               String       @id @default(uuid())
+  tenantId         String
+  key              String
+  value            String
+  updatedAt        DateTime     @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@map("institution_settings")
+}
+
+model Subscription {
+  id               String           @id @default(uuid())
+  tenantId         String
+  plan             SubscriptionPlan @default(STANDARD)
+  startDate        DateTime
+  endDate          DateTime
+  isActive         Boolean          @default(true)
+  amountPaid       Float
+  transactionId    String?
+  createdAt        DateTime         @default(now())
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("subscriptions")
+}
+
+model License {
+  id               String       @id @default(uuid())
+  tenantId         String
+  licenseKey       String       @unique
+  maxStudents      Int          @default(500)
+  maxStaff         Int          @default(50)
+  expiresAt        DateTime
+  isValid          Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("licenses")
+}

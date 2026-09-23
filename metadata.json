@@ -1,0 +1,6 @@
+{
+  "name": "Madrasah Management SaaS Platform",
+  "description": "Multi-tenant Madrasah Management and Administration SaaS platform for Bangladesh covering administration, students, academics, attendance, fees, accounting, funds, exams, and reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
